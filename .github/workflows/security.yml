@@ -1,0 +1,27 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --locked
+      - name: Secret scan
+        run: uv run pre-commit run gitleaks --all-files
+      - name: Dependency audit
+        run: |
+          uv export --frozen --no-hashes --no-emit-project -o requirements.txt
+          uvx pip-audit -r requirements.txt

@@ -6,3 +6,6 @@ Core idea: no security finding is accepted until it is tied to replayable
 evidence and confirmed by an independent, deterministic verifier.
 
 **Status:** in development. For authorized testing of your own systems only.
+
+![CI](https://github.com/nooriqbalx/TRACE/actions/workflows/ci.yml/badge.svg)
+![Security](https://github.com/nooriqbalx/TRACE/actions/workflows/security.yml/badge.svg)
