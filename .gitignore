@@ -1,0 +1,26 @@
+
+# Environments and secrets
+.env
+.envrc
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- TRACE-specific ---
+evidence_store/
+*.har
+llm_cache/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+.aws/
+*.pem
+*.key
+*.p12
+experiments/raw/
