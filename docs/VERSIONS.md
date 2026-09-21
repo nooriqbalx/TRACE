@@ -14,3 +14,12 @@ mailhog                       crapi/mailhog           latest              linux/
 mongodb                       mongo                   4.4                 linux/arm64/v8      4be76f674fc4        159MB               8 months ago
 postgresdb                    postgres                14                  linux/arm64/v8      816cf7d06ec3        156MB               2 days ago
 ```
+
+## vAPI (recorded 2026-09-21)
+Commit: 67152695b0acf13dd424905729080fbc80d5a593 (2025-01-09)
+```
+CONTAINER           REPOSITORY              TAG                 PLATFORM            IMAGE ID            SIZE                CREATED
+vapi-db-1           mysql                   8.0                 linux/arm64/v8      7dcddc01f13b        229MB               4 months ago
+vapi-phpmyadmin-1   phpmyadmin/phpmyadmin   latest              linux/amd64         42a200db07b4        221MB               11 months ago
+vapi-www-1          vapi-www                latest              linux/arm64         b927fa689e82        167MB               8 minutes ago
+```
