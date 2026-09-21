@@ -135,3 +135,86 @@ robustness issue independent of the rate-limiting gap.
   reset, fire a bounded, capped batch of guesses (never the full
   keyspace against a real target), and confirm whether a 429/lockout
   ever appears within that capped budget.
+
+## BOLA + Excessive Data Exposure: mechanic service reports
+
+**Endpoint:** `GET /workshop/api/mechanic/mechanic_report?report_id={id}`
+
+**Preconditions:**
+- Any authenticated user token (role=user).
+- A valid, existing report_id. IDs are sequential integers, trivially
+  enumerable (this report was id=6 after only a handful of test accounts
+  and submissions).
+
+**Exact request:**
+(report belongs to user A, who submitted it; token belongs to user B, who
+has no relationship to A, this vehicle, or this report)
+
+**Response evidence (what proves it):**
+Identical response returned for both A's own token and B's token against
+the same report_id, confirming no ownership check is performed.
+
+Two distinct issues in this one finding:
+1. **BOLA (API1:2023, CWE-639):** any authenticated user can read any
+   report by guessing/enumerating its sequential integer ID, regardless
+   of who submitted it or which vehicle it concerns.
+2. **Excessive Data Exposure (API3:2023, CWE-213):** the response
+   includes the vehicle owner's full phone number
+   (vehicle.owner.number), a field never requested or displayed
+   anywhere in the Contact Mechanic UI flow. Even the legitimate report
+   owner is being served more PII than the feature needs, and this
+   over-exposure is what makes the BOLA bug above significantly worse,
+   an attacker doesn't just learn "a report exists", they get a phone
+   number and email tied to a specific VIN.
+
+**Root cause (in my own words):**
+Same systemic pattern as the vehicle-location bug: the JWT carries only
+`sub` and `role`, no resource-scoping claim, so authorization must be
+enforced server-side per request. This endpoint performs no such check,
+it looks up report_id in the database and returns the full nested object
+graph (mechanic, vehicle, owner) to any bearer of a valid token. The
+sequential integer ID makes enumeration trivial (no UUID randomness to
+brute-force), so an attacker can iterate report_id=1,2,3... and harvest
+every user's email, phone number and VIN from this single endpoint.
+Additionally, the response serializer was not scoped down for this
+use case, it appears to reuse a general-purpose "full report" object
+that includes fields (owner.number) irrelevant to a mechanic-status
+lookup, which is a separate, additive privacy failure on top of the
+missing ownership check.
+
+**Fix:**
+- Enforce ownership: before returning a report, check that the
+  requesting user's sub matches either vehicle.owner or the assigned
+  mechanic, return 403 otherwise.
+- Switch report_id (and other resource identifiers of this kind) from
+  sequential integers to random UUIDs, removing easy enumerability as
+  defense in depth (this alone does not fix the BOLA, but raises the
+  cost of exploitation).
+- Apply response-level field minimization: define a narrow serializer
+  for this endpoint that omits owner.number and any other field the
+  calling context does not need, rather than reusing a broad internal
+  model.
+
+**How a defender would detect it:**
+- Alert on a single (authenticated_user, report_id) access pattern
+  where report_id values span many different owners in a short window,
+  the same enumeration signature as the vehicle-location bug.
+- Response-size/field-content monitoring: flag endpoints whose
+  responses include PII fields (phone, email) not present in the
+  corresponding request or UI flow, a form of data-loss-prevention
+  check at the API gateway.
+- This is now the second and third confirmed instance of the identical
+  missing-ownership-check pattern across two unrelated resource types
+  (vehicle location, service reports). TRACE's BOLA verifier oracle
+  should therefore be written generically, parameterized by resource
+  type and ID field, not hardcoded to one endpoint, since this app
+  demonstrates the same root cause recurs across a codebase.
+
+## Note: report_link exposes VIN in URL query string
+The contact_mechanic response and the browser URL both carried the VIN
+as a plaintext query parameter
+(?VIN=L5WJ7PDXP16AZV22F, and report links follow the same pattern with
+report_id). Identifiers like this ending up in URLs means they persist
+in browser history, server access logs, and any shared screenshot or
+referrer header, a minor but real exposure surface, distinct from but
+related to the excessive-exposure finding above.
