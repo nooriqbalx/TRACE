@@ -23,3 +23,6 @@ vapi-db-1           mysql                   8.0                 linux/arm64/v8  
 vapi-phpmyadmin-1   phpmyadmin/phpmyadmin   latest              linux/amd64         42a200db07b4        221MB               11 months ago
 vapi-www-1          vapi-www                latest              linux/arm64         b927fa689e82        167MB               8 minutes ago
 ```
+
+## TRACE-Bench (own code, recorded 2026-09-24)
+24 scenario pairs, tested at commit: 95c4ebe
