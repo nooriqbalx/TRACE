@@ -1,43 +1,81 @@
-# TRACE-Bench ground truth. Each entry describes what SHOULD happen for
-# this endpoint/scenario, independent of which build (patched or
-# vulnerable) is currently running. TRACE's verifier is scored against
-# this file, never against what the LLM or scanner itself claims.
+# TRACE-Bench ground truth. All 24 scenarios below are validated by the
+# automated suite at bench/tests/test_ground_truth.py (one test function
+# per scenario, checking both vulnerable and patched behavior). Run:
+#   uv run pytest bench/tests/ -v
 
 scenarios:
-  - id: bola_direct_path
-    class: bola
-    endpoint: /patients/{patient_id}
-    method: GET
-    variant: direct-path-parameter-id
-    description: >
-      Patient record fetched by an integer ID directly in the URL path.
-      A caller authenticated as a different user must not be able to
-      read another patient's record.
-    toggle_env: TRACEBENCH_PATCH_BOLA_DIRECT_PATH
-    test:
-      setup: "two seeded patients: id=1 owned by user 1, id=2 owned by user 2"
-      attack_request: "GET /patients/2 with header X-User-Id: 1"
-      vulnerable_expected: "200, returns patient 2's full record"
-      patched_expected: "403 Forbidden"
-      negative_control: "GET /patients/1 with header X-User-Id: 1 -> 200 (owner accessing own record must still work)"
-    confirmed:
-      vulnerable_run: "200 OK, leaked patient 2's medical_note (Canary-B)"
-      patched_run: "403 Forbidden; owner access to patient 1 still 200 OK"
+  - {id: bola_direct_path, class: bola, endpoint: "/patients/{id}", method: GET,
+     variant: direct-path-id, toggle_env: TRACEBENCH_PATCH_BOLA_DIRECT_PATH,
+     description: "Patient fetched by path ID; caller must own it."}
+  - {id: bola_body_id, class: bola, endpoint: /patients/lookup, method: POST,
+     variant: json-body-id, toggle_env: TRACEBENCH_PATCH_BOLA_BODY_ID,
+     description: "Patient fetched by ID inside a JSON body."}
+  - {id: bola_related_object, class: bola, endpoint: "/appointments/{id}", method: GET,
+     variant: related-object-id, toggle_env: TRACEBENCH_PATCH_BOLA_RELATED_OBJECT,
+     description: "Appointment's nested patient data leaks without checking the appointment's owner."}
+  - {id: bola_write_access, class: bola, endpoint: "/patients/{id}/notes", method: PUT,
+     variant: unauthorized-write, toggle_env: TRACEBENCH_PATCH_BOLA_WRITE_ACCESS,
+     description: "Any user can overwrite another patient's medical note (write, not just read)."}
+  - {id: bola_decoy_protected, class: bola, endpoint: "/patients/{id}/billing", method: GET,
+     variant: decoy-already-protected, toggle_env: null,
+     description: "Always ownership-checked; verifier must not flag as a finding."}
+  - {id: bola_decoy_public, class: bola, endpoint: "/doctors/{id}", method: GET,
+     variant: decoy-intentionally-public, toggle_env: null,
+     description: "Public directory data; verifier must not flag as BOLA."}
 
-  - id: bola_body_id
-    class: bola
-    endpoint: /patients/lookup
-    method: POST
-    variant: json-body-id
-    description: >
-      Patient record fetched by an integer ID sent in a JSON POST body
-      (simulating a search/lookup feature), rather than a URL path
-      parameter. A caller authenticated as a different user must not
-      be able to read another patient's record this way either.
-    toggle_env: TRACEBENCH_PATCH_BOLA_BODY_ID
-    test:
-      setup: "two seeded patients: id=1 owned by user 1, id=2 owned by user 2"
-      attack_request: 'POST /patients/lookup {"patient_id": 2} with header X-User-Id: 1'
-      vulnerable_expected: "200, returns patient 2's full record"
-      patched_expected: "403 Forbidden"
-      negative_control: 'POST /patients/lookup {"patient_id": 1} with header X-User-Id: 1 -> 200'
+  - {id: authn_otp_bruteforce, class: broken_authentication, endpoint: /auth/verify-otp,
+     method: POST, variant: unthrottled-otp, toggle_env: TRACEBENCH_PATCH_AUTHN_OTP_BRUTEFORCE,
+     description: "4-digit OTP check has no attempt limit (mirrors the crAPI finding)."}
+  - {id: authn_predictable_token, class: broken_authentication, endpoint: /auth/login-predictable,
+     method: POST, variant: predictable-session-token, toggle_env: TRACEBENCH_PATCH_AUTHN_PREDICTABLE_TOKEN,
+     description: "Session token is derivable from user_id (session-{id}) instead of random."}
+  - {id: authn_token_no_expiry, class: broken_authentication, endpoint: /me/expiring,
+     method: GET, variant: no-session-ttl, toggle_env: TRACEBENCH_PATCH_AUTHN_TOKEN_NO_EXPIRY,
+     description: "Session tokens are accepted indefinitely; no expiry enforced."}
+  - {id: authn_reset_token_reuse, class: broken_authentication, endpoint: /auth/reset-password,
+     method: POST, variant: reusable-reset-token, toggle_env: TRACEBENCH_PATCH_AUTHN_RESET_TOKEN_REUSE,
+     description: "Password-reset token can be replayed multiple times, not invalidated after first use."}
+  - {id: authn_decoy_rate_limited, class: broken_authentication, endpoint: /auth/login-protected,
+     method: POST, variant: decoy-already-protected, toggle_env: null,
+     description: "Always rate-limited; verifier must not flag as newly vulnerable."}
+  - {id: authn_decoy_public, class: broken_authentication, endpoint: /auth/status,
+     method: GET, variant: decoy-intentionally-public, toggle_env: null,
+     description: "Legitimately unauthenticated status check; not a finding."}
+
+  - {id: exposure_extra_pii_fields, class: excessive_data_exposure, endpoint: "/patients/{id}/profile",
+     method: GET, variant: unfiltered-pii, toggle_env: TRACEBENCH_PATCH_EXPOSURE_EXTRA_PII_FIELDS,
+     description: "Response includes phone/national_id never shown in any UI."}
+  - {id: exposure_stack_trace, class: excessive_data_exposure, endpoint: "/patients/{id}/risk-score",
+     method: GET, variant: leaked-exception-detail, toggle_env: TRACEBENCH_PATCH_EXPOSURE_STACK_TRACE,
+     description: "A ZeroDivisionError's raw message is returned to the caller instead of a generic error."}
+  - {id: exposure_list_leaks_others, class: excessive_data_exposure, endpoint: /patients,
+     method: GET, variant: ignored-owner-filter, toggle_env: TRACEBENCH_PATCH_EXPOSURE_LIST_LEAKS_OTHERS,
+     description: "mine=true filter is silently ignored, returning every patient."}
+  - {id: exposure_admin_flags, class: excessive_data_exposure, endpoint: "/patients/{id}/full",
+     method: GET, variant: internal-fields-leaked, toggle_env: TRACEBENCH_PATCH_EXPOSURE_ADMIN_FLAGS,
+     description: "Internal-only fields (is_test_account, internal_risk_score) included in the response."}
+  - {id: exposure_decoy_own_profile, class: excessive_data_exposure, endpoint: /me/profile,
+     method: GET, variant: decoy-legitimate-self-access, toggle_env: null,
+     description: "User viewing their own full record is correct, not excessive exposure."}
+  - {id: exposure_decoy_public_directory, class: excessive_data_exposure, endpoint: /doctors,
+     method: GET, variant: decoy-intentionally-public, toggle_env: null,
+     description: "Public doctor directory; not a finding."}
+
+  - {id: ratelimit_login_bruteforce, class: rate_limiting, endpoint: /auth/login,
+     method: POST, variant: unthrottled-password-guessing, toggle_env: TRACEBENCH_PATCH_RATELIMIT_LOGIN_BRUTEFORCE,
+     description: "Password login accepts unlimited guesses."}
+  - {id: ratelimit_password_reset_trigger, class: rate_limiting, endpoint: /auth/forgot-password,
+     method: POST, variant: unthrottled-reset-trigger, toggle_env: TRACEBENCH_PATCH_RATELIMIT_PASSWORD_RESET_TRIGGER,
+     description: "Reset-trigger endpoint can be called unlimited times per email."}
+  - {id: ratelimit_expensive_search, class: rate_limiting, endpoint: /patients/search,
+     method: GET, variant: unthrottled-expensive-query, toggle_env: TRACEBENCH_PATCH_RATELIMIT_EXPENSIVE_SEARCH,
+     description: "Search endpoint has no per-caller request cap."}
+  - {id: ratelimit_signup_spam, class: rate_limiting, endpoint: /auth/signup,
+     method: POST, variant: unthrottled-account-creation, toggle_env: TRACEBENCH_PATCH_RATELIMIT_SIGNUP_SPAM,
+     description: "Signup has no per-source limit, enabling account-creation spam."}
+  - {id: ratelimit_decoy_already_protected, class: rate_limiting, endpoint: /support/contact,
+     method: POST, variant: decoy-already-protected, toggle_env: null,
+     description: "Always rate-limited; verifier must not flag as newly vulnerable."}
+  - {id: ratelimit_decoy_unlimited_by_design, class: rate_limiting, endpoint: /health,
+     method: GET, variant: decoy-legitimately-unthrottled, toggle_env: null,
+     description: "Health checks must remain callable at high frequency; not a finding."}
