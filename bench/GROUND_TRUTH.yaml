@@ -23,3 +23,21 @@ scenarios:
     confirmed:
       vulnerable_run: "200 OK, leaked patient 2's medical_note (Canary-B)"
       patched_run: "403 Forbidden; owner access to patient 1 still 200 OK"
+
+  - id: bola_body_id
+    class: bola
+    endpoint: /patients/lookup
+    method: POST
+    variant: json-body-id
+    description: >
+      Patient record fetched by an integer ID sent in a JSON POST body
+      (simulating a search/lookup feature), rather than a URL path
+      parameter. A caller authenticated as a different user must not
+      be able to read another patient's record this way either.
+    toggle_env: TRACEBENCH_PATCH_BOLA_BODY_ID
+    test:
+      setup: "two seeded patients: id=1 owned by user 1, id=2 owned by user 2"
+      attack_request: 'POST /patients/lookup {"patient_id": 2} with header X-User-Id: 1'
+      vulnerable_expected: "200, returns patient 2's full record"
+      patched_expected: "403 Forbidden"
+      negative_control: 'POST /patients/lookup {"patient_id": 1} with header X-User-Id: 1 -> 200'

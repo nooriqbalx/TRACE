@@ -13,6 +13,7 @@ Broken-authentication scenarios, added separately, use a real token flow.
 import os
 
 from fastapi import FastAPI, Header, HTTPException
+from pydantic import BaseModel
 
 app = FastAPI(title="TRACE-Bench", version="0.1.0")
 
@@ -84,6 +85,34 @@ def get_patient(patient_id: int, x_user_id: int | None = Header(default=None)) -
     if is_patched("BOLA_DIRECT_PATH") and (
         x_user_id is None or x_user_id != patient["owner_user_id"]
     ):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    return patient
+
+
+# ---------------------------------------------------------------------------
+# BOLA scenario: ID inside JSON request body (not the URL path)
+#
+# Same underlying bug as bola_direct_path, but the identifier arrives in
+# a POST body field instead of a path parameter. Included because some
+# scanners only inspect path/query parameters for BOLA and miss
+# body-based identifiers entirely, a real gap this benchmark should catch.
+# ---------------------------------------------------------------------------
+
+
+class PatientLookupRequest(BaseModel):
+    patient_id: int
+
+
+@app.post("/patients/lookup", tags=["bola-body-id"])
+def lookup_patient(
+    body: PatientLookupRequest, x_user_id: int | None = Header(default=None)
+) -> dict[str, object]:
+    patient = patients.get(body.patient_id)
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if is_patched("BOLA_BODY_ID") and (x_user_id is None or x_user_id != patient["owner_user_id"]):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     return patient
