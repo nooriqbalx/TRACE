@@ -27,3 +27,4 @@ experiments/raw/
 
 # Third-party testbed source (cloned separately, not part of TRACE)
 testbeds/vapi/
+__pycache__/

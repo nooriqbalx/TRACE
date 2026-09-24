@@ -1,0 +1,25 @@
+# TRACE-Bench ground truth. Each entry describes what SHOULD happen for
+# this endpoint/scenario, independent of which build (patched or
+# vulnerable) is currently running. TRACE's verifier is scored against
+# this file, never against what the LLM or scanner itself claims.
+
+scenarios:
+  - id: bola_direct_path
+    class: bola
+    endpoint: /patients/{patient_id}
+    method: GET
+    variant: direct-path-parameter-id
+    description: >
+      Patient record fetched by an integer ID directly in the URL path.
+      A caller authenticated as a different user must not be able to
+      read another patient's record.
+    toggle_env: TRACEBENCH_PATCH_BOLA_DIRECT_PATH
+    test:
+      setup: "two seeded patients: id=1 owned by user 1, id=2 owned by user 2"
+      attack_request: "GET /patients/2 with header X-User-Id: 1"
+      vulnerable_expected: "200, returns patient 2's full record"
+      patched_expected: "403 Forbidden"
+      negative_control: "GET /patients/1 with header X-User-Id: 1 -> 200 (owner accessing own record must still work)"
+    confirmed:
+      vulnerable_run: "200 OK, leaked patient 2's medical_note (Canary-B)"
+      patched_run: "403 Forbidden; owner access to patient 1 still 200 OK"
