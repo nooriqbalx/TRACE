@@ -132,6 +132,18 @@
     </table>
   </div>
 
+  <div class="wide" style="margin-top:48px;">
+    <div class="chart-container">
+      <div class="chart-legend">
+        <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--safe)"></span>Precision</span>
+        <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--accent)"></span>Recall</span>
+        <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--text-faint)"></span>F1</span>
+      </div>
+      <svg id="chart-ablation" class="chart-svg" viewBox="0 0 680 280" role="img" aria-label="Bar chart of precision, recall, and F1 across five configurations"></svg>
+      <div class="chart-caption">Hover a bar for the exact value. Data matches the table above.</div>
+    </div>
+  </div>
+
   <div class="prose" style="margin-top:44px;">
     <h2>What grounding changes</h2>
     <p><strong>C1 to C2.</strong> A generic DAST scanner found none of TRACE-Bench's 16 seeded vulnerabilities. An LLM reasoning over the same spec found 7, with roughly 60 percent of its claims wrong.</p>
@@ -175,9 +187,18 @@
 <section id="evidence-log">
   <div class="prose">
     <h2>Evidence log</h2>
+    <p>Coverage detail: which of TRACE-Bench's 16 seeded vulnerabilities have a working probe and oracle right now.</p>
     <p>A sample of this evaluation's real output: what C4 accepted, what it rejected, and what this project has not yet built an oracle for.</p>
   </div>
   <div class="wide">
+    <div class="chart-container" style="margin-bottom:36px;">
+      <div class="chart-legend">
+        <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--safe)"></span>Confirmed</span>
+        <span class="chart-legend-item"><span class="chart-legend-swatch" style="background:var(--line)"></span>No oracle yet</span>
+      </div>
+      <svg id="chart-per-class" class="chart-svg" viewBox="0 0 560 280" role="img" aria-label="Stacked bar chart of confirmed versus uncovered vulnerabilities by class"></svg>
+      <div class="chart-caption">Coverage by vulnerability class, out of 4 seeded vulnerabilities each. The entries below name exactly which endpoints still need an oracle.</div>
+    </div>
     <details class="log-entry">
       <summary><span class="tag neutral">unprobeable</span> PUT /patients/{patient_id}/notes, no probe strategy available</summary>
       <div class="body">Proposed by C3 as BOLA. Correctly rejected by the grounding stage. This run's prober coverage did not include a request strategy for this exact endpoint shape.</div>

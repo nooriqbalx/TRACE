@@ -98,6 +98,9 @@ mapper, the second is the one reported below).
 | C4 (evidence-grounded) | 6 | 0 | 10 | 1.00 | 0.38 | 0.55 |
 | C5 (full TRACE, verified) | 5 | 0 | 11 | 1.00 | 0.31 | 0.48 |
 
+![Precision, recall, and F1 across the ablation](figures/fig1_ablation_results.png)
+![C5 outcomes by vulnerability class](figures/fig2_per_class_c5.png)
+
 **C1 vs. C2**: a generic DAST scanner found none of TRACE-Bench's 16
 seeded vulnerabilities; an LLM reasoning over the same spec found 7,
 with roughly 60% of its claims wrong.

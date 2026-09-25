@@ -23,6 +23,9 @@ Across a 5-configuration ablation on a 16-vulnerability benchmark:
 | C4 — evidence-grounded | **1.00** | 0.38 | 0.55 |
 | C5 — full TRACE (verified) | **1.00** | 0.31 | 0.48 |
 
+![Precision, recall, and F1 across the ablation](docs/figures/fig1_ablation_results.png)
+![C5 outcomes by vulnerability class](docs/figures/fig2_per_class_c5.png)
+
 Grounding every claim in a real, replayable probe and confirming it
 with a deterministic oracle takes precision from 0.41 to a clean
 **1.00** — every finding TRACE reports is real. See

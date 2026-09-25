@@ -154,7 +154,8 @@ nav.section-nav a:hover, nav.section-nav a.active { color: var(--text); border-b
 .tab-btn:hover { color: var(--text-soft); }
 .tab-btn.active { color: var(--text); background: var(--bg-inset); box-shadow: inset 0 -2px 0 var(--accent); }
 
-.exhibit-grid { display: grid; grid-template-columns: 1fr 1fr; }
+.exhibit-grid { display: none; grid-template-columns: 1fr 1fr; }
+.exhibit-grid:not([hidden]) { display: grid; }
 @media (max-width: 720px) {
   .exhibit-grid { grid-template-columns: 1fr; }
   .exhibit-grid > div:first-child { border-bottom: 1px solid var(--line); }
@@ -209,3 +210,35 @@ details.log-entry[open] summary::before { content: '-'; }
 footer.site { padding: 48px 24px; font-size: 0.86rem; color: var(--text-faint); }
 footer.site a { color: var(--text-soft); }
 footer.site .links { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
+
+/* --- Interactive result charts --- */
+.chart-container { position: relative; margin-top: 8px; }
+.chart-svg { width: 100%; height: auto; display: block; }
+.chart-legend { display: flex; gap: 20px; margin-bottom: 14px; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; color: var(--text-soft); flex-wrap: wrap; }
+.chart-legend-item { display: flex; align-items: center; gap: 6px; }
+.chart-legend-swatch { width: 10px; height: 10px; display: inline-block; flex-shrink: 0; }
+.chart-caption { font-size: 0.82rem; color: var(--text-faint); margin-top: 10px; }
+.chart-axis-label { font-family: 'JetBrains Mono', monospace; font-size: 10px; fill: var(--text-faint); }
+.chart-gridline { stroke: var(--line-soft); stroke-width: 1; }
+.chart-bar { transition: opacity 150ms ease; cursor: pointer; }
+.chart-bar:hover { opacity: 0.8; }
+.bar-precision, .bar-tp { fill: var(--safe); }
+.bar-recall { fill: var(--accent); }
+.bar-f1 { fill: var(--text-faint); }
+.bar-fn { fill: var(--line); }
+
+.chart-tooltip {
+  position: fixed;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  padding: 7px 11px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--text);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  z-index: 30;
+  white-space: nowrap;
+}
+.chart-tooltip.visible { opacity: 1; }
