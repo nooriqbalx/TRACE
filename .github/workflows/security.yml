@@ -14,10 +14,10 @@ jobs:
   scan:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       - run: uv sync --locked
       - name: Secret scan
         run: uv run pre-commit run gitleaks --all-files
@@ -25,3 +25,12 @@ jobs:
         run: |
           uv export --frozen --no-hashes --no-emit-project -o requirements.txt
           uvx pip-audit -r requirements.txt
+      - name: Generate SBOM
+        run: |
+          uvx cyclonedx-py requirements requirements.txt --output-format json --output-file sbom.json
+      - name: Upload SBOM
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72 # v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 90
