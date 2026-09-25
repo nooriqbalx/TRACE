@@ -4,6 +4,10 @@
 
 **Live demo:** https://nooriqbalx.github.io/TRACE/
 
+
+https://github.com/user-attachments/assets/b7274156-3ad8-4136-ae47-1423dee2adb4
+
+
 TRACE finds authorization and rate-limiting vulnerabilities in REST
 APIs the way most scanners can't: by tying every reported finding to a
 replayable request/response pair, then independently confirming it
