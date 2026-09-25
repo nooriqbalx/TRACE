@@ -5,34 +5,24 @@ Configuration C5: independent, deterministic verification of a
 suspected vulnerability. No LLM is involved anywhere in this module --
 every oracle here reaches its verdict purely by executing real
 requests (through tracesec.executor.Executor, which is itself
-scope-guarded and evidence-logging) and comparing real responses. This
-is what makes C5 resistant to exactly the failure mode C2 and C4
-cannot avoid on their own: an LLM (or a human) being wrong about
-whether a claim is true. The oracle either observes the vulnerability
-happen, or it does not.
+scope-guarded and evidence-logging) and comparing real responses.
 
 Each oracle below generalizes a pattern already exercised by hand in
 this project: verify_bola mirrors the manual crAPI vehicle-location
 and mechanic-report tests (docs/lab/crapi-manual-notes.md) and
 TRACE-Bench's bola_* scenarios; verify_unthrottled mirrors the manual
-OTP brute-force test (docs/lab/crapi-manual-notes.md,
-"Broken Authentication") and TRACE-Bench's authn_otp_bruteforce /
+OTP brute-force test and TRACE-Bench's authn_otp_bruteforce /
 ratelimit_* scenarios; verify_exposure mirrors
 exposure_extra_pii_fields.
 
 Verdicts (see tracesec.findings.VerifierVerdict):
 - CONFIRMED: the oracle observed the vulnerable behavior directly.
 - REFUTED: the oracle observed the endpoint correctly rejecting the
-  attack (e.g. a 403 on cross-identity access, or a 429 within the
-  request budget).
-- INCONCLUSIVE: the oracle could not establish a clean baseline (e.g.
-  even the legitimate owner's request failed), so no verdict about the
-  vulnerability itself can be drawn from this run.
+  attack.
+- INCONCLUSIVE: the oracle could not establish a clean baseline.
 
-Safety: verify_unthrottled takes an explicit max_attempts cap and is
-the only oracle that sends more than a couple of requests, per
-THREAT_MODEL.md T6 (accidental DoS) and RESPONSIBLE_USE.md. It never
-sends unbounded traffic; the caller decides the cap.
+Safety: verify_unthrottled takes an explicit max_attempts cap, per
+THREAT_MODEL.md T6.
 """
 
 import json
@@ -53,20 +43,33 @@ def verify_bola(
     *,
     finding_id: str,
     endpoint: str,
+    body: dict[str, Any] | None = None,
 ) -> Finding:
     """Differential BOLA oracle. Sends the same request twice: once as
     the resource's legitimate owner (the baseline/negative control),
     once as a different, unrelated identity (the actual attack).
 
+    body, when given, is sent as the JSON request body on both calls --
+    needed for body-based BOLA (e.g. POST /patients/lookup) and
+    write-access BOLA (e.g. PUT /patients/{id}/notes), where the
+    identifier or the attack itself lives in the body rather than the
+    URL. Defaults to None (no body sent), preserving the original
+    path-parameter-only behavior for existing callers.
+
     CONFIRMED: the owner's request succeeds AND the other identity's
     request also succeeds (2xx) -- no ownership check exists.
     REFUTED: the owner's request succeeds but the other identity's is
     rejected (401/403) -- ownership is correctly enforced.
-    INCONCLUSIVE: even the owner's baseline request did not succeed,
-    so no conclusion about ownership enforcement can be drawn.
+    INCONCLUSIVE: even the owner's baseline request did not succeed.
     """
-    owner_result = executor.request(method, url, headers=dict(owner.headers))
-    other_result = executor.request(method, url, headers=dict(other.headers))
+    owner_kwargs: dict[str, Any] = {"headers": dict(owner.headers)}
+    other_kwargs: dict[str, Any] = {"headers": dict(other.headers)}
+    if body is not None:
+        owner_kwargs["json"] = body
+        other_kwargs["json"] = body
+
+    owner_result = executor.request(method, url, **owner_kwargs)
+    other_result = executor.request(method, url, **other_kwargs)
 
     evidence_ids = [owner_result.evidence.index, other_result.evidence.index]
     owner_ok = 200 <= owner_result.response.status_code < 300
@@ -115,18 +118,11 @@ def verify_unthrottled(
     method: str,
 ) -> Finding:
     """Bounded-burst oracle for broken-authentication (e.g. OTP or
-    login guessing) and rate-limiting checks -- structurally the same
-    test, capped at max_attempts requests, per THREAT_MODEL.md T6.
+    login guessing) and rate-limiting checks, capped at max_attempts
+    requests, per THREAT_MODEL.md T6.
 
-    CONFIRMED: max_attempts requests were sent and none received a 429
-    -- no throttling observed within the budget.
-    REFUTED: a 429 was received before the cap was reached --
-    throttling is enforced.
-
-    `attempt` is a zero-argument callable the caller constructs to
-    perform one request (e.g. a closure over a changing OTP guess or
-    a fixed wrong password); it must return an ExecutionResult so this
-    oracle can read the response status and cite the evidence record.
+    CONFIRMED: max_attempts requests were sent and none received a 429.
+    REFUTED: a 429 was received before the cap was reached.
     """
     evidence_ids: list[int] = []
     for i in range(max_attempts):
@@ -168,14 +164,11 @@ def verify_exposure(
 ) -> Finding:
     """Excessive-data-exposure oracle: fetch the endpoint as a
     legitimate identity and check the response for fields the caller
-    has declared should never appear (e.g. an internal risk score, a
-    national ID, another party's PII).
+    has declared should never appear.
 
-    CONFIRMED: at least one disallowed field is present in the
-    response body.
+    CONFIRMED: at least one disallowed field is present.
     REFUTED: none of the disallowed fields are present.
-    INCONCLUSIVE: the response body is not a JSON object, so no field
-    check could be performed.
+    INCONCLUSIVE: the response body is not a JSON object.
     """
     result = executor.request(method, url, headers=dict(identity.headers))
     evidence_ids = [result.evidence.index]
@@ -219,10 +212,7 @@ def verify_exposure(
 def check_regression(pre_patch: Finding, post_patch: Finding) -> bool:
     """Regression check: confirm a finding correctly flips from
     CONFIRMED (before a fix was applied) to REFUTED (after), for the
-    same vulnerability class and endpoint. This is what proves a
-    verifier oracle is actually sensitive to the underlying behavior,
-    rather than always returning the same verdict regardless of the
-    target's state."""
+    same vulnerability class and endpoint."""
     return (
         pre_patch.vuln_class == post_patch.vuln_class
         and pre_patch.endpoint == post_patch.endpoint

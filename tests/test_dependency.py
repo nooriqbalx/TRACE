@@ -1,23 +1,31 @@
 """
-Unit tests for tracesec.dependency: producer/consumer edge inference,
-sequence planning, coverage measurement, and BOLA probe generation.
+Unit tests for tracesec.dependency: producer/consumer edge inference
+(static and live-fallback), sequence planning, coverage measurement,
+and BOLA probe generation.
 
-The fixture spec below reproduces TRACE-Bench's real appointments ->
-patients relationship (the exact dependency a spec-only LLM scan
-missed, per docs/lab/llm-baseline-smoke-run.md), plus a doctors
-endpoint that shares no genuine dependency with anything, to confirm
-ordinary fields like "name" never create spurious edges.
+The fixture spec reproduces TRACE-Bench's real appointments ->
+patients relationship. The live-fallback tests additionally reproduce
+TRACE-Bench's real failure mode (an open "additionalProperties" schema
+with no "properties" key -- see docs/lab/phase8-full-evaluation-run.md)
+via httpx.MockTransport, so these tests document the exact scenario
+that motivated the fallback.
 """
+
+import httpx
 
 from tracesec.dependency import (
     BolaProbe,
     build_dependency_graph,
     dependency_coverage,
     dependency_graph_to_dict,
+    discover_producer_fields_live,
     plan_bola_probes,
     plan_sequences,
 )
+from tracesec.evidence import EvidenceStore
+from tracesec.executor import Executor
 from tracesec.findings import VulnerabilityClass
+from tracesec.scope import ScopedClient, ScopeGuard
 from tracesec.spec import parse_openapi
 
 _SPEC = {
@@ -175,8 +183,6 @@ def test_build_dependency_graph_no_self_loops():
 
 def test_build_dependency_graph_total_edge_count():
     edges = build_dependency_graph(_SPEC, _OPERATIONS)
-    # appointments->patients(path), appointments->patients/lookup(body),
-    # appointments->doctors(path) via doctor_id
     assert len(edges) == 3
 
 
@@ -260,3 +266,110 @@ def test_plan_bola_probes_records_param_location_per_target():
     body_probes = [p for p in probes if p.attack_path == "/patients/lookup"]
     assert len(body_probes) == 1
     assert body_probes[0].param_location == "body"
+
+
+# --- Live-fallback tests: TRACE-Bench's real failure mode ---
+
+_OPEN_SCHEMA_SPEC = {
+    "openapi": "3.1.0",
+    "info": {"title": "t", "version": "0.1"},
+    "paths": {
+        "/appointments/{appointment_id}": {
+            "get": {
+                "operationId": "get_appointment",
+                "parameters": [
+                    {
+                        "name": "appointment_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object", "additionalProperties": True}
+                            }
+                        }
+                    }
+                },
+            }
+        },
+        "/patients/{patient_id}": {
+            "get": {
+                "operationId": "get_patient",
+                "parameters": [
+                    {
+                        "name": "patient_id",
+                        "in": "path",
+                        "required": True,
+                        "schema": {"type": "integer"},
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"type": "object", "additionalProperties": True}
+                            }
+                        }
+                    }
+                },
+            }
+        },
+    },
+}
+_OPEN_SCHEMA_OPERATIONS = parse_openapi(_OPEN_SCHEMA_SPEC)
+
+
+def _executor(handler, tmp_path):
+    guard = ScopeGuard({"good.test"})
+    client = ScopedClient(guard, transport=httpx.MockTransport(handler))
+    evidence = EvidenceStore(tmp_path / "evidence.jsonl")
+    return Executor(client, evidence, session_id="dependency-live")
+
+
+def test_discover_producer_fields_live_reads_real_response_keys(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"id": 1, "patient_id": 2, "notes": "x"})
+
+    executor = _executor(handler, tmp_path)
+    fields = discover_producer_fields_live(executor, "GET", "https://good.test/appointments/1")
+    assert fields == {"id", "patient_id"}
+
+
+def test_discover_producer_fields_live_returns_empty_on_non_json(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json")
+
+    executor = _executor(handler, tmp_path)
+    fields = discover_producer_fields_live(executor, "GET", "https://good.test/x")
+    assert fields == set()
+
+
+def test_static_only_finds_no_edges_on_open_schema_spec():
+    edges = build_dependency_graph(_OPEN_SCHEMA_SPEC, _OPEN_SCHEMA_OPERATIONS)
+    assert edges == []
+
+
+def test_live_fallback_recovers_the_edge_open_schema_hid(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "appointments" in str(request.url):
+            return httpx.Response(200, json={"id": 1, "patient_id": 2})
+        return httpx.Response(200, json={"id": 2})
+
+    executor = _executor(handler, tmp_path)
+    live_fields = {
+        ("GET", "/appointments/{appointment_id}"): discover_producer_fields_live(
+            executor, "GET", "https://good.test/appointments/1"
+        ),
+    }
+
+    edges = build_dependency_graph(
+        _OPEN_SCHEMA_SPEC, _OPEN_SCHEMA_OPERATIONS, live_producer_fields=live_fields
+    )
+    matches = [e for e in edges if e.field_name == "patient_id"]
+    assert len(matches) == 1
+    assert matches[0].producer_path == "/appointments/{appointment_id}"
+    assert matches[0].consumer_path == "/patients/{patient_id}"

@@ -33,3 +33,5 @@ __pycache__/
 experiments/*/evidence.jsonl
 experiments/*/llm-cache.json
 experiments/*/zap-report.json
+experiments/*/c2-cache.json
+experiments/*/c3-cache.json

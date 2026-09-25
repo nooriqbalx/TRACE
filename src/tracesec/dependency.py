@@ -2,39 +2,44 @@
 tracesec.dependency
 
 Infers producer -> consumer relationships between OpenAPI operations:
-an operation "produces" a field if its 2xx response schema includes a
-property (e.g. "patient_id"), and another operation "consumes" that
-same field if it has a path/query parameter or request-body property
-with a matching name. A DependencyEdge records that a value returned
-by the producer operation can be used to drive a request to the
-consumer operation -- exactly the appointments -> patients
-relationship in TRACE-Bench that the C2 LLM smoke-run failed to find
-(see docs/lab/llm-baseline-smoke-run.md).
+an operation "produces" a field if its 2xx response includes that
+field, and another operation "consumes" that same field if it has a
+path/query parameter or request-body property with a matching name.
 
-This module resolves schemas from the raw OpenAPI spec dict (needed
-for response-field names, which tracesec.spec's Operation does not
-carry) combined with the already-parsed Operation list from
-tracesec.spec (for parameters).
+Field discovery has two tiers:
+1. Static (schema-based): read property names from the response
+   schema in the OpenAPI spec itself. Free, but fails when a target's
+   framework cannot enumerate fields from its return type -- exactly
+   what happens with TRACE-Bench: FastAPI endpoints typed to return
+   dict[str, object] emit an open {"type": "object",
+   "additionalProperties": true} schema with no "properties" key (see
+   docs/lab/phase8-full-evaluation-run.md for the first real run this
+   was discovered on).
+2. Live (traffic-based): discover_producer_fields_live() issues one
+   real request and reads the actual JSON response's top-level keys.
+   build_dependency_graph uses this only as a fallback, for producers
+   whose static field set came back empty -- static results are
+   always preferred when available, since they require no network
+   access at all.
 
 Known limitations, deliberately out of scope for this pass:
 - Only one level of $ref resolution (a response schema that is itself
-  a $ref) is followed; refs nested inside a schema's own properties
-  are not resolved further.
+  a $ref) is followed.
 - Matching is restricted to fields that look like identifiers ("id" or
-  ending in "_id"), to avoid spurious edges on common field names
-  (e.g. "name") that happen to appear in multiple schemas.
-- Sequences are two steps (producer -> consumer); multi-hop (3+ step)
-  chaining is a documented extension, not built here.
-- Inference is schema-based (static) only; traffic-based inference
-  (observing real responses via the Phase 2 executor/evidence store)
-  is a documented extension for a later pass.
+  ending in "_id").
+- Sequences are two steps (producer -> consumer); multi-hop chaining
+  is a documented extension.
 """
 
+import json
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tracesec.findings import VulnerabilityClass
 from tracesec.spec import Operation
+
+if TYPE_CHECKING:
+    from tracesec.executor import Executor
 
 
 def _resolve_schema(spec: dict[str, Any], schema: dict[str, Any] | None) -> dict[str, Any]:
@@ -121,6 +126,29 @@ def _consumer_fields(
     return fields
 
 
+def discover_producer_fields_live(
+    executor: Executor, method: str, url: str, headers: dict[str, str] | None = None
+) -> set[str]:
+    """Fallback for when a target's response schema has no
+    "properties" to read statically (see module docstring). Issues one
+    real request and returns the actual top-level JSON response keys
+    that look like identifiers. Returns an empty set on any
+    request/parse failure or non-dict body, so one unreachable or
+    malformed endpoint never breaks graph construction for the rest.
+    """
+    try:
+        result = executor.request(method, url, headers=headers or {})
+    except Exception:
+        return set()
+    try:
+        body = json.loads(result.response.text)
+    except ValueError, TypeError:
+        return set()
+    if not isinstance(body, dict):
+        return set()
+    return {k for k in body if _is_identifier_field(k)}
+
+
 @dataclass(frozen=True)
 class DependencyEdge:
     """A producer operation's response includes a field that a
@@ -137,12 +165,20 @@ class DependencyEdge:
 
 
 def build_dependency_graph(
-    spec: dict[str, Any], operations: list[Operation]
+    spec: dict[str, Any],
+    operations: list[Operation],
+    live_producer_fields: dict[tuple[str, str], set[str]] | None = None,
 ) -> list[DependencyEdge]:
-    """Infer producer -> consumer edges between operations, using only
-    the raw OpenAPI spec's schemas (no live traffic). See module
-    docstring for the identifier-only matching heuristic and the
-    one-level $ref resolution limitation."""
+    """Infer producer -> consumer edges between operations.
+
+    Static (schema-based) fields are always used when the spec's
+    response schema provides them. live_producer_fields is an
+    optional, caller-supplied {(method, path): field_names} map used
+    only as a fallback for producers whose static field set is empty
+    -- see discover_producer_fields_live for how to build one. Omitting
+    it (the default) preserves pure schema-only behavior with no
+    network access, exactly as in earlier tests of this module.
+    """
     paths = spec.get("paths")
     if not isinstance(paths, dict):
         return []
@@ -159,9 +195,11 @@ def build_dependency_graph(
                 op_dict = candidate
 
         key = (operation.method, operation.path)
-        producers[key] = {
-            f for f in _response_field_names(spec, op_dict) if _is_identifier_field(f)
-        }
+        static_fields = {f for f in _response_field_names(spec, op_dict) if _is_identifier_field(f)}
+        if not static_fields and live_producer_fields:
+            static_fields = live_producer_fields.get(key, set())
+        producers[key] = static_fields
+
         consumers[key] = {
             name: loc
             for name, loc in _consumer_fields(spec, operation, op_dict).items()
@@ -221,8 +259,8 @@ class Sequence:
 
 def plan_sequences(edges: list[DependencyEdge]) -> list[Sequence]:
     """Turn dependency edges into two-step sequences. One sequence per
-    edge; multi-hop chaining is a documented extension (see module
-    docstring), not built here."""
+    edge; multi-hop chaining is a documented extension, not built
+    here."""
     return [
         Sequence(
             producer_method=edge.producer_method,
@@ -238,9 +276,7 @@ def plan_sequences(edges: list[DependencyEdge]) -> list[Sequence]:
 def dependency_coverage(operations: list[Operation], edges: list[DependencyEdge]) -> float:
     """Fraction of operations that participate in at least one
     dependency edge (as producer or consumer), out of all operations.
-    A scanner testing operations in total isolation scores 0.0 here;
-    this metric is what should rise once the dependency mapper is
-    used, compared to a baseline that ignores it."""
+    A scanner testing operations in total isolation scores 0.0 here."""
     if not operations:
         return 0.0
     involved: set[tuple[str, str]] = set()
@@ -255,12 +291,7 @@ def dependency_coverage(operations: list[Operation], edges: list[DependencyEdge]
 class BolaProbe:
     """A concrete BOLA test case derived from a dependency edge: an
     identifier obtained via the setup step is replayed against the
-    attack step under a different identity. This generalizes the
-    manual test performed by hand against crAPI's vehicle-location and
-    mechanic-report endpoints (docs/lab/crapi-manual-notes.md) and
-    against TRACE-Bench's bola_related_object scenario. param_location
-    records where the attacker would place the swapped identifier
-    (path/query/body) when crafting the attack step's request."""
+    attack step under a different identity."""
 
     vuln_class: VulnerabilityClass
     setup_method: str
@@ -272,11 +303,7 @@ class BolaProbe:
 
 
 def plan_bola_probes(edges: list[DependencyEdge]) -> list[BolaProbe]:
-    """Turn every dependency edge into a concrete BOLA test case. Any
-    identifier field an operation is proven to accept (in any
-    location: path, query, or body) is a viable place to test
-    cross-identity access, since the attacker fully controls the
-    request they send."""
+    """Turn every dependency edge into a concrete BOLA test case."""
     return [
         BolaProbe(
             vuln_class=VulnerabilityClass.BOLA,

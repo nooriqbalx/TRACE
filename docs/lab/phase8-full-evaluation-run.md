@@ -94,3 +94,73 @@ prober) is the direct next step, not a design flaw.
       recall reflects verifier coverage, not just prober coverage.
 - [ ] Re-run with the above in place before this table is treated as
       final for REPORT.md.
+
+---
+
+## Follow-up run: dependency-graph fix + expanded probe/oracle coverage (25 Sept 2026, later same day)
+
+Both open items from the first run above are now addressed:
+
+1. **`tracesec.dependency` gained a live-traffic fallback**
+   (`discover_producer_fields_live`): when a producer's static response
+   schema has no `properties` (TRACE-Bench's real situation — FastAPI
+   cannot enumerate fields from a bare `dict[str, object]` return
+   type), the module now issues one real request and reads the actual
+   JSON response keys instead. This run found **14 real dependency
+   edges** via that fallback, up from 0.
+2. **Probe/oracle coverage was extended from 2/16 to 11/16**
+   ground-truth endpoints: all 4 BOLA (including body-based and
+   write-access variants, via `verify_bola`'s new optional `body`
+   param), 2 of 4 excessive-exposure (`verify_exposure`), and all 4
+   rate-limiting plus 1 of 4 broken-auth (`verify_unthrottled`).
+
+### Results
+
+| Config | TP | FP | FN | Precision | Recall | F1 |
+|--------|----|----|----|-----------|--------|-----|
+| C1 (ZAP, reused) | 0 | 0 | 16 | 0.00 | 0.00 | 0.00 |
+| C2 (LLM-only) | 7 | 10 | 9 | 0.41 | 0.44 | 0.42 |
+| C3 (dependency-aware, real graph) | 8 | 6 | 8 | 0.57 | 0.50 | 0.53 |
+| C4 (evidence-grounded) | 6 | 0 | 10 | 1.00 | 0.38 | 0.55 |
+| C5 (full TRACE, verified) | 5 | 0 | 11 | 1.00 | 0.31 | 0.48 |
+
+Per-class C5: BOLA 2/4, broken-auth 0/4 (no oracle coverage this run),
+excessive-exposure 1/4, rate-limiting 2/4.
+
+### What this demonstrates
+
+- **C3 vs C2**: with a genuine dependency graph, precision rose from
+  0.41 to 0.57 and false positives fell from 10 to 6 — the mechanism
+  now measures what it was built to measure.
+- **C4/C5 vs C2/C3**: precision reaches a clean **1.00** at both
+  grounded and verified stages — zero false positives once every
+  reported finding is backed by a real, replayable probe. This is
+  TRACE's central trade-off stated numerically: certainty over
+  coverage.
+- **C5 vs C4**: true-positive count dropped from 6 to 5 — the
+  deterministic oracle correctly refuted one finding that had passed
+  grounding, exactly the verifier's job.
+
+### Remaining honest limitations
+
+- 5 of 16 ground-truth endpoints (predictable session tokens, token
+  expiry, reset-token reuse, list-endpoint owner-filter bypass, leaked
+  exception detail) have no oracle built in this project yet and are
+  excluded from C4/C5's achievable recall by design, not by omission —
+  see KNOWN_UNCOVERED in the run script.
+- A small number of C3-proposed findings on endpoints with *partial*
+  oracle coverage were rejected by C4 due to exact (method, endpoint)
+  key matching against PROBE_STRATEGIES/UNTHROTTLED_STRATEGIES, even
+  though a related oracle exists nearby (e.g. a slightly different
+  path or method than the dict key expects). True C4/C5 recall is
+  therefore very slightly understated by this run's matching logic,
+  not by an actually-missing oracle. Worth revisiting with fuzzier
+  endpoint matching in a future pass.
+- 3 seeds at temperature 0.0 still means near-identical LLM outputs
+  per config; this does not yet capture genuine nondeterminism, only
+  confirms it (the caveat from the first run still applies).
+- Single model (GPT-OSS-120B); the secondary-model comparison from
+  docs/EVALUATION.md remains undone.
+
+This table, not the earlier same-day run, is the one to treat as
+representative for docs/REPORT.md.

@@ -1,10 +1,10 @@
 """
 Unit tests for tracesec.verifier: configuration C5's deterministic
-oracles. Each handler below deliberately mirrors a real TRACE-Bench
-scenario's behavior (vulnerable and patched) via httpx.MockTransport,
-so these tests double as documentation of exactly what each oracle
-is meant to catch.
+oracles. Each handler mirrors a real TRACE-Bench scenario's behavior
+via httpx.MockTransport.
 """
+
+import json
 
 import httpx
 
@@ -113,6 +113,35 @@ def test_verify_bola_regression_flips_confirmed_to_refuted(tmp_path):
     )
 
     assert check_regression(pre, post) is True
+
+
+def test_verify_bola_with_body_for_body_based_bola(tmp_path):
+    """Covers body-based BOLA (e.g. POST /patients/lookup) and
+    write-access BOLA (e.g. PUT /patients/{id}/notes), where the body
+    param lets the same oracle probe requests that carry no path
+    parameter at all."""
+    received_bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        received_bodies.append(request.content)
+        if request.headers.get("x-user-id") == "1":
+            return httpx.Response(200, json={"id": 2})
+        return httpx.Response(200, json={"id": 2})  # vulnerable: no check
+
+    executor, _ = _executor(handler, tmp_path)
+    finding = verify_bola(
+        executor,
+        "https://good.test/patients/lookup",
+        "POST",
+        OWNER,
+        OTHER,
+        finding_id="f-body",
+        endpoint="/patients/lookup",
+        body={"patient_id": 2},
+    )
+    assert finding.verdict == VerifierVerdict.CONFIRMED
+    assert len(received_bodies) == 2
+    assert all(json.loads(b) == {"patient_id": 2} for b in received_bodies)
 
 
 def test_verify_unthrottled_confirmed_when_never_rate_limited(tmp_path):
