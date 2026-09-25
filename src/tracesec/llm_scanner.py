@@ -14,12 +14,23 @@ evidence_ids requirement, but the "evidence" backing a C2 finding is
 only the LLM's own claim text, recorded into the EvidenceStore as-is.
 This is intentional and is the point of the ablation: C2's evidence is
 present but not independently meaningful, unlike C4/C5's, which must
-cite a genuine, replayable EvidenceRecord from an executed request.
+cite a genuine, replayable EvidenceRecord from an executed request
+(see tracesec.pipeline, which re-anchors these findings to real
+probes).
+
+Configuration C3 (dependency-aware) is also defined here: the same
+prompt, plus a section describing producer/consumer relationships from
+tracesec.dependency (e.g. "GET /appointments/{id} returns a patient_id
+usable against GET /patients/{patient_id}"), so the LLM can reason
+about relationships between operations rather than judging each in
+isolation -- exactly the relationship the plain C2 run missed (see
+docs/lab/llm-baseline-smoke-run.md).
 """
 
 import json
 from typing import Any
 
+from tracesec.dependency import DependencyEdge
 from tracesec.evidence import EvidenceStore
 from tracesec.findings import Finding, VerifierVerdict, VulnerabilityClass
 from tracesec.llm_adapter import LLMAdapter
@@ -56,6 +67,27 @@ def _format_operations(operations: list[Operation]) -> str:
 
 def build_prompt(operations: list[Operation]) -> str:
     return _PROMPT_TEMPLATE.format(operations_block=_format_operations(operations))
+
+
+def build_prompt_with_dependencies(operations: list[Operation], edges: list[DependencyEdge]) -> str:
+    """Configuration C3's prompt: build_prompt's operation list plus a
+    section describing known producer/consumer relationships, so the
+    LLM can reason about them explicitly rather than guessing from
+    endpoint shape alone."""
+    base = build_prompt(operations)
+    if not edges:
+        return base
+    lines = [
+        f'- {e.producer_method} {e.producer_path} returns a "{e.field_name}" field '
+        f"that {e.consumer_method} {e.consumer_path} accepts as a "
+        f"{e.consumer_param_location} parameter"
+        for e in edges
+    ]
+    dependencies_block = "\n".join(lines)
+    return (
+        base + "\n\nKnown relationships between operations (an identifier returned by one "
+        "operation can be used as input to another):\n" + dependencies_block
+    )
 
 
 def _parse_llm_response(text: str) -> list[dict[str, Any]]:
@@ -123,6 +155,48 @@ def run_llm_scanner(
             evidence_ids=[record.index],
             verdict=VerifierVerdict.UNVERIFIED,
             verifier_notes="from LLM-only scanner (C2); no independent verification",
+        )
+        findings.append(finding)
+    return findings
+
+
+def run_dependency_aware_scanner(
+    operations: list[Operation],
+    edges: list[DependencyEdge],
+    adapter: LLMAdapter,
+    evidence: EvidenceStore,
+    model: str,
+    temperature: float = 0.0,
+    session_id: str = "llm-scanner-c3",
+) -> list[Finding]:
+    """Configuration C3: identical to run_llm_scanner (C2), except the
+    prompt includes the dependency graph from tracesec.dependency."""
+    prompt = build_prompt_with_dependencies(operations, edges)
+    raw_response = adapter.complete(model=model, prompt=prompt, temperature=temperature)
+    parsed_rows = _parse_llm_response(raw_response)
+
+    findings: list[Finding] = []
+    for i, row in enumerate(parsed_rows):
+        record = evidence.add(
+            session_id=session_id,
+            method=row["method"],
+            url=row["path"],
+            request_headers={},
+            request_body=None,
+            response_status=0,
+            response_headers={},
+            response_body=json.dumps(row),
+            elapsed_seconds=0.0,
+        )
+        finding = Finding(
+            finding_id=f"llm-c3-{i}",
+            vuln_class=VulnerabilityClass(row["vuln_class"]),
+            endpoint=row["path"],
+            method=row["method"],
+            claim=row["claim"],
+            evidence_ids=[record.index],
+            verdict=VerifierVerdict.UNVERIFIED,
+            verifier_notes="from dependency-aware LLM scanner (C3); no independent verification",
         )
         findings.append(finding)
     return findings
