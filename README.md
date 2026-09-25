@@ -2,6 +2,8 @@
 
 **Evidence-grounded, dependency-aware REST API security testing.**
 
+**Live demo:** https://nooriqbalx.github.io/TRACE/
+
 TRACE finds authorization and rate-limiting vulnerabilities in REST
 APIs the way most scanners can't: by tying every reported finding to a
 replayable request/response pair, then independently confirming it
