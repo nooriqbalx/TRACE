@@ -3,14 +3,13 @@
 Scope: threats to and from the TRACE tool itself, not to the targets.
 
 ## Assets
-Evidence store, API credentials and tokens used in tests, LLM API keys, AWS
-credentials, ground-truth labels, experiment results.
+Evidence store, API credentials and tokens used in tests, LLM API keys,
+ground-truth labels, experiment results.
 
 ## Trust boundaries
 1. TRACE core <-> target API (target responses are UNTRUSTED input)
 2. TRACE core <-> LLM provider (data leaves the machine)
-3. TRACE core <-> AWS (cloud credentials)
-4. TRACE core <-> local disk (evidence, cache)
+3. TRACE core <-> local disk (evidence, cache)
 
 ## Threats and mitigations
 
@@ -23,9 +22,8 @@ credentials, ground-truth labels, experiment results.
 | T5 | Fabricated or hallucinated finding accepted | Spoofing | Evidence-citation check plus independent verifier (C4, C5) | Error-injection run |
 | T6 | Unintended DoS from rate-limit tests | Denial of service | Per-endpoint burst cap, global request cap, kill switch, testbeds only | Test that caps trip |
 | T7 | Destructive requests (DELETE, bulk updates) against non-owned or non-resettable data | Tampering | State-changing tests only on resettable testbeds; verifier limited to canary objects; snapshot reset between runs | Test that verifier refuses non-canary targets |
-| T8 | AWS credential exposure or over-broad IAM | Elevation | No long-lived keys committed; SSO or short-lived credentials; least-privilege read-only collectors; SSM instead of open SSH | Terraform review; IAM policy checked with Access Analyzer or Prowler |
-| T9 | Supply-chain compromise via dependencies | Tampering | Pinned lockfile, `pip-audit`, Dependabot, SBOM, image scan | CI checks |
-| T10 | Misuse of the tool against systems the user does not own | Abuse | RESPONSIBLE_USE.md, allowlist required at startup, no default targets | Startup fails without an allowlist |
+| T8 | Supply-chain compromise via dependencies | Tampering | Pinned lockfile, `pip-audit`, Dependabot, SBOM, image scan | CI checks |
+| T9 | Misuse of the tool against systems the user does not own | Abuse | RESPONSIBLE_USE.md, allowlist required at startup, no default targets | Startup fails without an allowlist |
 
 ## Residual risks
 Free-tier LLM providers may log prompts; only synthetic testbed data is ever
