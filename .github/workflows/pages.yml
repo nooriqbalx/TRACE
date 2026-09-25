@@ -1,0 +1,37 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # NOTE: the two actions below are on version tags, not pinned SHAs,
+      # because GitHub's commit API was rate-limited while setting this up.
+      # Follow-up: resolve and pin their SHAs the same way checkout/setup-uv/
+      # upload-artifact are pinned in ci.yml and security.yml.
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/site
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
