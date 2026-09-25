@@ -28,3 +28,8 @@ experiments/raw/
 # Third-party testbed source (cloned separately, not part of TRACE)
 testbeds/vapi/
 __pycache__/
+
+# Experiment run artifacts (data, not source)
+experiments/*/evidence.jsonl
+experiments/*/llm-cache.json
+experiments/*/zap-report.json
